@@ -152,6 +152,39 @@ def render(beat: dict, path: Path, idx: int) -> None:
 VOICE_DIR = ROOT / "pipeline/voice/ep01"   # 放 b01.mp3 b02.mp3 …
 
 
+def _dur(path: Path) -> float:
+    """读音频时长（秒）。"""
+    r = subprocess.run([FFMPEG, "-i", str(path), "-f", "null", "-"],
+                       capture_output=True, text=True)
+    for tok in r.stderr.split():
+        if tok.startswith("time="):
+            h, m, sec = tok[5:].split(":")
+            return int(h) * 3600 + int(m) * 60 + float(sec.rstrip(","))
+    return 0.0
+
+
+def apply_audio_first(pad: float = 0.9) -> None:
+    """音频先行：有配音的拍，画面时长 = 语音时长 + 留白。
+
+    这是 T1 流水线的核心原则——日语台词长度决定画面节奏，不是反过来。
+    """
+    changed = 0
+    for i, b in enumerate(BEATS):
+        if b["kind"] not in ("line", "inner", "mono"):
+            continue
+        for ext in ("wav", "mp3", "m4a"):
+            f = VOICE_DIR / f"b{i:02d}.{ext}"
+            if f.exists():
+                d = _dur(f)
+                if d > 0:
+                    b["t"] = round(max(b["t"], d + pad), 2)
+                    changed += 1
+                break
+    if changed:
+        print(f"  音频先行：{changed} 拍按语音时长重排，"
+              f"总时长 {sum(x['t'] for x in BEATS):.1f}s")
+
+
 def voice_files() -> list:
     """返回 [(beat_index, 起始秒, 文件路径)]，缺文件的自动跳过。"""
     out, acc = [], 0.0
@@ -264,6 +297,7 @@ def build_video(pngs: list, audio: Path, dst: Path) -> None:
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     TMP.mkdir(parents=True, exist_ok=True)
+    apply_audio_first()
     pngs = []
     for i, b in enumerate(BEATS):
         p = TMP / f"b{i:02d}.png"
