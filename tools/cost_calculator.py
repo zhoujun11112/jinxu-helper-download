@@ -66,6 +66,13 @@ class Params:
     edit_hours: float = 70.0              # 剪辑/字幕/贴字/合成工时
     price_edit_per_hour: float = 120.0    # 外包时薪
 
+    # ---- 锁定后变更（T1 三级变更控制）----
+    l1_changes_per_ep: float = 2.0        # 每集 L1 修改数（时长中性，单句重录）
+    l1_hours_each: float = 0.4            # 每处 L1 的重录+替换工时
+    l2_changes_total: float = 2.0         # 全片 L2 修改总数（结构性，回退animatic）
+    l2_hours_each: float = 3.5            # 每处 L2 的回退返工工时（含重生成受影响镜头）
+    l2_regen_shots_each: float = 3.0      # 每处 L2 平均牵连需重生成的镜头数
+
     # ---- 投放测试 ----
     audience_groups: int = 3              # 测试人群分组数
     creatives_per_group: int = 2          # 每组素材版本数
@@ -113,6 +120,14 @@ def compute(p: Params) -> dict:
     # --- 剪辑 ---
     edit_cost = p.edit_hours * p.price_edit_per_hour
 
+    # --- 锁定后变更返工（T1 三级变更控制）---
+    l1_hours = p.episodes * p.l1_changes_per_ep * p.l1_hours_each
+    l2_hours = p.l2_changes_total * p.l2_hours_each
+    change_labor = (l1_hours + l2_hours) * p.price_edit_per_hour
+    l2_regen = (p.l2_changes_total * p.l2_regen_shots_each
+                / max(p.video_pass_rate, 1e-6) * p.price_video_per_gen)
+    change_cost = change_labor + l2_regen
+
     # --- 投流 ---
     ad_cost = (p.audience_groups * p.creatives_per_group
                * p.budget_per_creative * p.test_rounds)
@@ -128,6 +143,7 @@ def compute(p: Params) -> dict:
         "日语配音": tts_cost,
         "音乐与音效": p.music_cost,
         "剪辑／字幕／贴字／合成": edit_cost,
+        "锁定后变更返工（L1+L2）": change_cost,
         "投流测试": ad_cost,
         "项管／存储／质检": p.overhead_cost,
     }
