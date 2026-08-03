@@ -149,8 +149,29 @@ def render(beat: dict, path: Path, idx: int) -> None:
     ], check=True, capture_output=True)
 
 
+VOICE_DIR = ROOT / "pipeline/voice/ep01"   # 放 b01.mp3 b02.mp3 …
+
+
+def voice_files() -> list:
+    """返回 [(beat_index, 起始秒, 文件路径)]，缺文件的自动跳过。"""
+    out, acc = [], 0.0
+    for i, b in enumerate(BEATS):
+        if b["kind"] in ("line", "inner", "mono"):
+            for ext in ("mp3", "wav", "m4a"):
+                f = VOICE_DIR / f"b{i:02d}.{ext}"
+                if f.exists():
+                    out.append((i, acc, f))
+                    break
+        acc += b["t"]
+    return out
+
+
 def build_audio(dst: Path) -> None:
-    """音频设计：底噪room tone；心声处叠 200Hz 低频耳鸣；改写处上扬音。"""
+    """音频设计：底噪room tone；心声处叠 200Hz 低频耳鸣；改写处上扬音。
+
+    若 pipeline/voice/ep01/ 下存在 bXX.mp3，自动按时间码混入配音；
+    心声与独白轨额外做轻处理（心声降 3dB 更"远"，与设计文档一致）。
+    """
     total = sum(b["t"] for b in BEATS)
     inner_starts, shift_start, acc = [], None, 0.0
     for b in BEATS:
@@ -189,9 +210,26 @@ def build_audio(dst: Path) -> None:
         labels.append("[sh]")
         n += 1
 
+    # 配音（可选）：存在即混入，缺失则保持纯音效版
+    vf = voice_files()
+    for bi, st, path in vf:
+        inputs += ["-i", str(path)]
+        kind = BEATS[bi]["kind"]
+        gain = 0.72 if kind == "inner" else 1.0        # 心声更"远"
+        chain = (f"[{n}:a]volume={gain},"
+                 f"aformat=sample_fmts=fltp:sample_rates=44100:"
+                 f"channel_layouts=stereo,"
+                 f"adelay={int(st*1000)}|{int(st*1000)}[vo{n}]")
+        parts.append(chain)
+        labels.append(f"[vo{n}]")
+        n += 1
+    if vf:
+        print(f"  混入配音 {len(vf)} 句")
+
     fc = ";".join(parts) + ";" + "".join(labels) + \
         f"amix=inputs={len(labels)}:duration=longest:normalize=0," \
-        f"volume=1.6,aformat=sample_fmts=fltp:sample_rates=44100:" \
+        f"volume={'1.0' if vf else '1.6'}," \
+        f"aformat=sample_fmts=fltp:sample_rates=44100:" \
         f"channel_layouts=stereo[aout]"
     subprocess.run([FFMPEG, "-y", *inputs, "-filter_complex", fc,
                     "-map", "[aout]", "-t", f"{total}", str(dst)],
